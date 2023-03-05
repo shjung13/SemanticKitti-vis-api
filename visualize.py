@@ -96,17 +96,35 @@ if __name__ == '__main__':
     quit()
 
   # fix sequence name
-  FLAGS.sequence = '{0:02d}'.format(int(FLAGS.sequence))
+  ### FLAGS.sequence = '{0:02d}'.format(int(FLAGS.sequence))
 
   # does sequence folder exist?
-  scan_paths = os.path.join(FLAGS.dataset, "sequences",
-                            FLAGS.sequence, "velodyne")
+  nuscenes = False
+  if 'nuscenes' in FLAGS.dataset:
+    nuscenes = True
+    scan_paths = os.path.join(FLAGS.dataset, FLAGS.sequence, 'velodyne')
+  else:
+    scan_paths = os.path.join(FLAGS.dataset, "sequences",
+                              FLAGS.sequence, "velodyne")
   if os.path.isdir(scan_paths):
     print("Sequence folder exists! Using sequence from %s" % scan_paths)
   else:
     print("Sequence folder doesn't exist! Exiting...")
     quit()
 
+  if 'nuscenes' in FLAGS.dataset:
+    pose_paths = os.path.join(FLAGS.dataset,
+                              FLAGS.sequence, "poses.txt")
+  else:
+    pose_paths = os.path.join(FLAGS.dataset, "sequences",
+                              FLAGS.sequence, "poses.txt")
+
+  if 'nuscenes' in FLAGS.dataset:
+    calib_paths = os.path.join(FLAGS.dataset,
+                               FLAGS.sequence, "calib.txt")
+  else:
+    calib_paths = os.path.join(FLAGS.dataset, "sequences",
+                               FLAGS.sequence, "calib.txt")
   # populate the pointclouds
   scan_names = [os.path.join(dp, f) for dp, dn, fn in os.walk(
       os.path.expanduser(scan_paths)) for f in fn]
@@ -115,11 +133,19 @@ if __name__ == '__main__':
   # does sequence folder exist?
   if not FLAGS.ignore_semantics:
     if FLAGS.predictions is not None:
-      label_paths = os.path.join(FLAGS.predictions, "sequences",
-                                 FLAGS.sequence, "predictions")
+      if 'nuscenes' in FLAGS.predictions:
+        label_paths = os.path.join(FLAGS.predictions,
+                                   FLAGS.sequence, "predictions")
+      else:
+        label_paths = os.path.join(FLAGS.predictions, "sequences",
+                                   FLAGS.sequence, "predictions")
     else:
-      label_paths = os.path.join(FLAGS.dataset, "sequences",
-                                 FLAGS.sequence, "labels")
+      if 'nuscenes' in FLAGS.dataset:
+        label_paths = os.path.join(FLAGS.dataset,
+                                   FLAGS.sequence, "labels")
+      else:
+        label_paths = os.path.join(FLAGS.dataset, "sequences",
+                                   FLAGS.sequence, "labels")
     if os.path.isdir(label_paths):
       print("Labels folder exists! Using labels from %s" % label_paths)
     else:
@@ -140,7 +166,7 @@ if __name__ == '__main__':
   else:
     color_dict = CFG["color_map"]
     nclasses = len(color_dict)
-    scan = SemLaserScan(nclasses, color_dict, project=True)
+    scan = SemLaserScan(nclasses, color_dict, project=True, nuscenes=nuscenes)
 
   # create a visualizer
   semantics = not FLAGS.ignore_semantics
@@ -151,7 +177,8 @@ if __name__ == '__main__':
                      scan_names=scan_names,
                      label_names=label_names,
                      offset=FLAGS.offset,
-                     semantics=semantics, instances=instances and semantics)
+                     semantics=semantics, instances=instances and semantics, nuscenes=nuscenes,
+                     pose_file=pose_paths, calib_file=calib_paths)
 
   # print instructions
   print("To navigate:")

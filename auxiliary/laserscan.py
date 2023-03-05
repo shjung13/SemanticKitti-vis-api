@@ -78,6 +78,69 @@ class LaserScan:
     remissions = scan[:, 3]  # get remission
     self.set_points(points, remissions)
 
+  def open_multiple_scan(self, f_list, offset_range, pose_file, calib_file):
+    # reset just in case there was an open structure
+    self.reset()
+
+    start, end = offset_range
+    scan_list = []
+
+    poses = np.loadtxt(pose_file)
+    calib_file = open(calib_file)
+    for line in calib_file:
+      key, content = line.strip().split(":")
+      if key != 'Tr':
+        continue
+      values = [float(v) for v in content.strip().split()]
+
+      pose = np.zeros((4, 4))
+      pose[0, 0:4] = values[0:4]
+      pose[1, 0:4] = values[4:8]
+      pose[2, 0:4] = values[8:12]
+      pose[3, 3] = 1.0
+
+      calib = pose
+      break
+    calib_file.close()
+
+    Tr = calib
+    Tr_inv = np.linalg.inv(Tr)
+
+    for i in range(start, end + 1):
+      if i == start:
+        values = poses[i]
+        key_pose = np.zeros((4, 4))
+        key_pose[0, 0:4] = values[0:4]
+        key_pose[1, 0:4] = values[4:8]
+        key_pose[2, 0:4] = values[8:12]
+        key_pose[3, 3] = 1.0
+        key_pose = np.matmul(Tr_inv, np.matmul(key_pose, Tr))
+        inv_key_pose = np.linalg.inv(key_pose)
+
+      filename = f_list[i]
+      values = poses[i]
+      pose = np.zeros((4, 4))
+      pose[0, 0:4] = values[0:4]
+      pose[1, 0:4] = values[4:8]
+      pose[2, 0:4] = values[8:12]
+      pose[3, 3] = 1.0
+      pose = np.matmul(Tr_inv, np.matmul(pose, Tr))
+
+      scan = np.fromfile(filename, dtype=np.float32)
+      scan = scan.reshape((-1, 4))
+      if i != start:
+        points = scan[:, :3]
+        remission = scan[:, 3]
+        diff_pose = inv_key_pose @ pose
+        transformed = points @ diff_pose[:3, :3].T + diff_pose[:3, 3]
+        scan = np.concatenate([transformed, remission[:, np.newaxis]], axis=1)
+      scan_list.append(scan)
+
+    scan = np.concatenate(scan_list, axis=0)
+    points = scan[:, 0:3]
+    remissions = scan[:, 3]
+    self.set_points(points, remissions)
+
   def set_points(self, points, remissions=None):
     """ Set scan attributes (instead of opening from file)
     """
@@ -170,10 +233,18 @@ class SemLaserScan(LaserScan):
   """Class that contains LaserScan with x,y,z,r,sem_label,sem_color_label,inst_label,inst_color_label"""
   EXTENSIONS_LABEL = ['.label']
 
-  def __init__(self, nclasses, sem_color_dict=None, project=False, H=64, W=1024, fov_up=3.0, fov_down=-25.0):
+  def __init__(self, nclasses, sem_color_dict=None, project=False, H=64, W=1024, fov_up=3.0, fov_down=-25.0, nuscenes=False):
     super(SemLaserScan, self).__init__(project, H, W, fov_up, fov_down)
     self.reset()
     self.nclasses = nclasses         # number of classes
+    self.nuscenes = nuscenes
+    if nuscenes:
+      print("KITTI config / NUSCENES config file paths are hard-coded in L# 242 at laserscan.py")
+      import yaml
+      with open("/home/sanghun/repositories/LidarUDA/configs/label_mapping/semantic-kitti-original.yaml", 'r') as f:
+        self.kitti_cfg = yaml.safe_load(f)
+      with open("/home/sanghun/repositories/LidarUDA/configs/label_mapping/nuscenes-10class.yaml", 'r') as f:
+        self.nus_cfg = yaml.safe_load(f)
 
     # make semantic colors
     max_sem_key = 0
@@ -191,6 +262,14 @@ class SemLaserScan(LaserScan):
                                             size=(max_inst_id, 3))
     # force zero to a gray-ish color
     self.inst_color_lut[0] = np.full((3), 0.1)
+
+  def nus_kitti_label_map(self, label):
+    kitti_v = []
+    for v in label:
+      learning_v = self.nus_cfg['learning_map'][v]
+      kitti_v.append(self.kitti_cfg['learning_map_inv'][learning_v])
+    return np.array(kitti_v)
+
 
   def reset(self):
     """ Reset scan members. """
@@ -215,7 +294,6 @@ class SemLaserScan(LaserScan):
                                     dtype=np.int32)              # [H,W]  label
     self.proj_inst_color = np.zeros((self.proj_H, self.proj_W, 3),
                                     dtype=np.float)              # [H,W,3] color
-
   def open_label(self, filename):
     """ Open raw scan and fill in attributes
     """
@@ -231,6 +309,26 @@ class SemLaserScan(LaserScan):
     # if all goes well, open label
     label = np.fromfile(filename, dtype=np.uint32)
     label = label.reshape((-1))
+    if self.nuscenes:
+      label = self.nus_kitti_label_map(label)
+
+    # set it
+    self.set_label(label)
+
+  def open_multiple_label(self, f_list, offset_range):
+    """ Open raw scan and fill in attributes
+    """
+    start, end = offset_range
+    label_list = []
+    for i in range(start, end + 1):
+      filename = f_list[i]
+      # if all goes well, open label
+      label = np.fromfile(filename, dtype=np.uint32)
+      label = label.reshape((-1))
+      if self.nuscenes:
+        label = self.nus_kitti_label_map(label)
+      label_list.append(label)
+    label = np.concatenate(label_list, axis=0)
 
     # set it
     self.set_label(label)

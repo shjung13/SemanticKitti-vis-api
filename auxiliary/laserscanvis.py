@@ -13,16 +13,22 @@ class LaserScanVis:
   """Class that creates and handles a visualizer for a pointcloud"""
 
   def __init__(self, scan, scan_names, label_names, offset=0,
-               semantics=True, instances=False):
+               semantics=True, instances=False, nuscenes=False, pose_file=None, calib_file=None):
     self.scan = scan
     self.scan_names = scan_names
     self.label_names = label_names
+    self.pose_file = pose_file
+    self.calib_file = calib_file
     self.offset = offset
+    self.stride = 1
     self.total = len(self.scan_names)
     self.semantics = semantics
     self.instances = instances
     self.px_scale=3
     self.bgcolor = 'white'
+    self.nuscenes = nuscenes
+    if nuscenes:
+      self.stride = 1
     # sanity check
     if not self.semantics and self.instances:
       print("Instances are only allowed in when semantics=True")
@@ -38,7 +44,7 @@ class LaserScanVis:
     self.action = "no"  # no, next, back, quit are the possibilities
 
     # new canvas prepared for visualizing data
-    self.canvas = SceneCanvas(keys='interactive', bgcolor=self.bgcolor, show=True, size=(1600, 1200), dpi=500, px_scale=1)
+    self.canvas = SceneCanvas(keys='interactive', bgcolor=self.bgcolor, show=True, size=(2000, 1000), dpi=500, px_scale=1)
     # interface (n next, b back, q quit, very simple)
     self.canvas.events.key_press.connect(self.key_press)
     self.canvas.events.draw.connect(self.draw)
@@ -153,10 +159,12 @@ class LaserScanVis:
     range_data = np.copy(self.scan.unproj_range)
     # print(range_data.max(), range_data.min())
     range_data = range_data**(1 / power)
-    # print(range_data.max(), range_data.min())
-    viridis_range = ((range_data - range_data.min()) /
-                     (range_data.max() - range_data.min()) *
-                     255).astype(np.uint8)
+    ### print(range_data.max(), range_data.min())
+    min_value = 1.0
+    viridis_range = ((range_data - min_value) /
+                     (range_data.max() - min_value) *
+                     255)
+    viridis_range = np.clip(viridis_range, 0, viridis_range.max()).astype(np.uint8)
     viridis_map = self.get_mpl_colormap("viridis")
     viridis_colors = viridis_map[viridis_range]
     self.scan_vis.set_data(self.scan.points,
@@ -199,17 +207,88 @@ class LaserScanVis:
       self.inst_img_vis.set_data(self.scan.proj_inst_color[..., ::-1])
       self.inst_img_vis.update()
 
+  def update_aggregated_scan(self):
+    # first open data
+    self.scan.open_multiple_scan(self.scan_names, (50, 110), pose_file=self.pose_file,
+        calib_file=self.calib_file)
+    if self.semantics:
+      self.scan.open_multiple_label(self.label_names, (50, 110))
+      self.scan.colorize()
+
+    # then change names
+    title = "scan " + str(self.offset)
+    self.canvas.title = title
+    self.img_canvas.title = title
+
+    # then do all the point cloud stuff
+
+    # plot scan
+    power = 16
+    # print()
+    range_data = np.copy(self.scan.unproj_range)
+    # print(range_data.max(), range_data.min())
+    range_data = range_data**(1 / power)
+    ### print(range_data.max(), range_data.min())
+    min_value = 1.0
+    viridis_range = ((range_data - min_value) /
+                     (range_data.max() - min_value) *
+                     255)
+    viridis_range = np.clip(viridis_range, 0, viridis_range.max()).astype(np.uint8)
+    viridis_map = self.get_mpl_colormap("viridis")
+    viridis_colors = viridis_map[viridis_range]
+    self.scan_vis.set_data(self.scan.points,
+                           face_color=viridis_colors[..., ::-1],
+                           edge_color=viridis_colors[..., ::-1],
+                           size=self.px_scale)
+
+    # plot semantics
+    if self.semantics:
+      self.sem_vis.set_data(self.scan.points,
+                            face_color=self.scan.sem_label_color[..., ::-1],
+                            edge_color=self.scan.sem_label_color[..., ::-1],
+                            size=self.px_scale)
+
+    # plot instances
+    if self.instances:
+      self.inst_vis.set_data(self.scan.points,
+                             face_color=self.scan.inst_label_color[..., ::-1],
+                             edge_color=self.scan.inst_label_color[..., ::-1],
+                             size=self.px_scale)
+
+    # now do all the range image stuff
+    # plot range image
+    data = np.copy(self.scan.proj_range)
+    # print(data[data > 0].max(), data[data > 0].min())
+    data[data > 0] = data[data > 0]**(1 / power)
+    data[data < 0] = data[data > 0].min()
+    # print(data.max(), data.min())
+    data = (data - data[data > 0].min()) / \
+        (data.max() - data[data > 0].min())
+    # print(data.max(), data.min())
+    self.img_vis.set_data(data)
+    self.img_vis.update()
+
+    if self.semantics:
+      self.sem_img_vis.set_data(self.scan.proj_sem_color[..., ::-1])
+      self.sem_img_vis.update()
+
+    if self.instances:
+      self.inst_img_vis.set_data(self.scan.proj_inst_color[..., ::-1])
+      self.inst_img_vis.update()
+
+
+
   # interface
   def key_press(self, event):
     self.canvas.events.key_press.block()
     self.img_canvas.events.key_press.block()
     if event.key == 'N':
-      self.offset += 1
+      self.offset += 1 * self.stride
       if self.offset >= self.total:
         self.offset = 0
       self.update_scan()
     elif event.key == 'B':
-      self.offset -= 1
+      self.offset -= 1 * self.stride
       if self.offset < 0:
         self.offset = self.total - 1
       self.update_scan()
@@ -217,18 +296,32 @@ class LaserScanVis:
       self.destroy()
     elif event.key == 'S' or event.key == 's':
       self.save_image()
+    elif event.key == 'a':
+      self.update_aggregated_scan()
 
   def save_image(self):
+    ### self.sem_view.camera.orbit(-176.5, 55.0)
+    ### print(f"azimuth: {self.sem_view.camera.azimuth}, elevation: {self.sem_view.camera.elevation}, roll: {self.sem_view.camera.roll}")
+    print(self.sem_view.camera.get_state())
+    ### state = {'scale_factor': 83.67246673526772, 'center': (0.0, 0.0, 0.0), 'fov': 45.0, 'elevation': 55.0, 'azimuth': -176.5, 'roll': 0.0}
+    ### self.sem_view.camera.set_state(state)
+    ### self.sem_view.camera.azimuth = -176.5 # (-176.5, 55.0)
+    ### self.sem_view.camera.elevation = 55.0
+    ### self.sem_view.camera.roll = 0.
+    ### self.scan_view.camera.azimuth = -176.5 # (-176.5, 55.0)
+    ### self.scan_view.camera.elevation = 55.0
+    ### self.scan_view.camera.roll = 0.
+    ### print(f'size: {self.canvas.size}')
     w, h = self.canvas.size
     scan_region = (0, 0, w // 2, h)
     np_image = self.canvas.render(region=scan_region, bgcolor=self.bgcolor, alpha=False)
     img = Image.fromarray(np_image)
-    img.save(f"vis/Kitti_{self.offset:06d}_scan.png")
+    img.save(f"aggregated_vis/Kitti_{self.offset:06d}_scan.png")
 
     sem_region = (w // 2, 0, w // 2, h)
     np_image = self.canvas.render(region=sem_region, bgcolor=self.bgcolor, alpha=False)
     img = Image.fromarray(np_image)
-    img.save(f"vis/Kitti_{self.offset:06d}_sem.png")
+    img.save(f"aggregated_vis/Kitti_{self.offset:06d}_sem.png")
 
   def draw(self, event):
     if self.canvas.events.key_press.blocked():
