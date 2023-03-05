@@ -6,5 +6,7 @@
 **build
 .vscode
 *.cxx
+*.png
+.vis/
 RangeNet.py
 
