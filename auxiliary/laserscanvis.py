@@ -46,17 +46,15 @@ class LaserScanVis:
     self.grid = self.canvas.central_widget.add_grid()
 
     widget_count = 0
-    '''
     # laserscan part
     self.scan_view = vispy.scene.widgets.ViewBox(
         border_color='white', parent=self.canvas.scene)
     self.grid.add_widget(self.scan_view, 0, widget_count)
     widget_count += 1
-    self.scan_vis = visuals.Markers()
+    self.scan_vis = visuals.Markers(antialias=0., alpha=1.0)
     self.scan_view.camera = 'turntable'
     self.scan_view.add(self.scan_vis)
     ### visuals.XYZAxis(parent=self.scan_view.scene)
-    '''
     # add semantics
     if self.semantics:
       print("Using semantics in visualizer")
@@ -81,9 +79,10 @@ class LaserScanVis:
       self.inst_view.add(self.inst_vis)
       ### visuals.XYZAxis(parent=self.inst_view.scene)
       # self.inst_view.camera.link(self.scan_view.camera)
+    self.sem_view.camera.link(self.scan_view.camera)
 
     # img canvas size
-    self.multiplier = 0 # 1
+    self.multiplier = 1
     self.canvas_W = 1024
     self.canvas_H = 64
     if self.semantics:
@@ -160,12 +159,10 @@ class LaserScanVis:
                      255).astype(np.uint8)
     viridis_map = self.get_mpl_colormap("viridis")
     viridis_colors = viridis_map[viridis_range]
-    '''
     self.scan_vis.set_data(self.scan.points,
                            face_color=viridis_colors[..., ::-1],
                            edge_color=viridis_colors[..., ::-1],
                            size=self.px_scale)
-    '''
 
     # plot semantics
     if self.semantics:
@@ -222,9 +219,16 @@ class LaserScanVis:
       self.save_image()
 
   def save_image(self):
-    np_image = self.canvas.render(bgcolor=self.bgcolor)
+    w, h = self.canvas.size
+    scan_region = (0, 0, w // 2, h)
+    np_image = self.canvas.render(region=scan_region, bgcolor=self.bgcolor, alpha=False)
     img = Image.fromarray(np_image)
-    img.save(f"Kitti_{self.offset:06d}.png")
+    img.save(f"vis/Kitti_{self.offset:06d}_scan.png")
+
+    sem_region = (w // 2, 0, w // 2, h)
+    np_image = self.canvas.render(region=sem_region, bgcolor=self.bgcolor, alpha=False)
+    img = Image.fromarray(np_image)
+    img.save(f"vis/Kitti_{self.offset:06d}_sem.png")
 
   def draw(self, event):
     if self.canvas.events.key_press.blocked():
